@@ -3,7 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { Header } from "@/components/layout/Header";
+import { RootLayout } from "@/components/layout/RootLayout";
 import Index from "./pages/Index";
 import Groups from "./pages/Groups";
 import GroupDetail from "./pages/GroupDetail";
@@ -19,17 +19,16 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <div className="min-h-screen bg-background">
-          <Header />
-          <Routes>
+        <Routes>
+          <Route element={<RootLayout />}>
             <Route path="/" element={<Index />} />
             <Route path="/groups" element={<Groups />} />
             <Route path="/groups/:id" element={<GroupDetail />} />
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="*" element={<NotFound />} />
-          </Routes>
-        </div>
+          </Route>
+        </Routes>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
