@@ -1,7 +1,5 @@
-import Dashboard from './Dashboard';
+import { Navigate } from 'react-router-dom';
 
-const Index = () => {
-  return <Dashboard />;
-};
-
-export default Index;
+export default function Index() {
+  return <Navigate to="/" replace />;
+}

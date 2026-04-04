@@ -1,202 +1,211 @@
-import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ArrowUpRight, ArrowDownRight, Wallet, TrendingUp, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BalanceCard } from '@/components/dashboard/BalanceCard';
-import { GroupCard } from '@/components/dashboard/GroupCard';
-import { ExpenseItem } from '@/components/dashboard/ExpenseItem';
-import { SettlementCard } from '@/components/dashboard/SettlementCard';
-import { useSplitPayStore } from '@/store/splitpay-store';
-import { calculateBalances, calculateSettlements } from '@/lib/splitpay-utils';
-import { Plus, ArrowRight, Receipt, Users } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { Link } from 'react-router-dom';
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+} from 'recharts';
+import { format, subDays, startOfMonth, endOfMonth } from 'date-fns';
+
+interface Transaction {
+  id: string;
+  type: 'income' | 'expense';
+  amount: number;
+  description: string;
+  date: string;
+}
+
+const fadeUp = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+};
 
 export default function Dashboard() {
-  const { currentUser, groups, expenses } = useSplitPayStore();
+  const { user } = useAuth();
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // Calculate overall balances
-  const { totalOwed, totalOwe, settlements } = useMemo(() => {
-    let totalOwed = 0;
-    let totalOwe = 0;
-    const allSettlements: ReturnType<typeof calculateSettlements> = [];
-
-    groups.forEach((group) => {
-      const groupExpenses = expenses.filter((e) => e.groupId === group.id);
-      const balances = calculateBalances(groupExpenses, group.members);
-      const userBalance = balances.find((b) => b.userId === currentUser.id);
-
-      if (userBalance) {
-        if (userBalance.amount > 0) {
-          totalOwed += userBalance.amount;
-        } else {
-          totalOwe += Math.abs(userBalance.amount);
-        }
-      }
-
-      allSettlements.push(...calculateSettlements(balances));
-    });
-
-    return {
-      totalOwed,
-      totalOwe,
-      settlements: allSettlements.filter(
-        (s) => s.from.id === currentUser.id || s.to.id === currentUser.id
-      ),
+  useEffect(() => {
+    if (!user) return;
+    const fetchData = async () => {
+      const { data } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('date', { ascending: false })
+        .limit(50);
+      setTransactions((data as Transaction[]) || []);
+      setLoading(false);
     };
-  }, [groups, expenses, currentUser.id]);
+    fetchData();
 
-  const recentExpenses = [...expenses]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 5);
+    const channel = supabase
+      .channel('transactions-realtime')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'transactions',
+        filter: `user_id=eq.${user.id}`,
+      }, () => { fetchData(); })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user]);
+
+  const now = new Date();
+  const monthStart = startOfMonth(now);
+  const monthEnd = endOfMonth(now);
+
+  const monthTransactions = transactions.filter((t) => {
+    const d = new Date(t.date);
+    return d >= monthStart && d <= monthEnd;
+  });
+
+  const totalIncome = monthTransactions
+    .filter((t) => t.type === 'income')
+    .reduce((s, t) => s + Number(t.amount), 0);
+
+  const totalExpenses = monthTransactions
+    .filter((t) => t.type === 'expense')
+    .reduce((s, t) => s + Number(t.amount), 0);
+
+  const balance = totalIncome - totalExpenses;
+
+  const chartData = Array.from({ length: 30 }, (_, i) => {
+    const date = subDays(now, 29 - i);
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const dayTx = transactions.filter((t) => t.date === dateStr);
+    return {
+      date: format(date, 'MMM dd'),
+      income: dayTx.filter((t) => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0),
+      expenses: dayTx.filter((t) => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0),
+    };
+  });
+
+  const recentTransactions = transactions.slice(0, 5);
+
+  const stats = [
+    { label: 'Balance', value: balance, icon: Wallet, color: 'text-primary', bgColor: 'bg-primary/10' },
+    { label: 'Income', value: totalIncome, icon: ArrowUpRight, color: 'text-success', bgColor: 'bg-success/10' },
+    { label: 'Expenses', value: totalExpenses, icon: ArrowDownRight, color: 'text-destructive', bgColor: 'bg-destructive/10' },
+    { label: 'Savings Rate', value: totalIncome > 0 ? Math.round(((totalIncome - totalExpenses) / totalIncome) * 100) : 0, icon: TrendingUp, color: 'text-warning', bgColor: 'bg-warning/10', isStat: true },
+  ];
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {[...Array(4)].map((_, i) => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="p-6"><div className="h-16 bg-muted rounded" /></CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-8 animate-fade-in">
-          <h1 className="text-3xl font-bold text-foreground mb-2">
-            Welcome back! 👋
-          </h1>
-          <p className="text-muted-foreground">
-            Here's your expense summary
-          </p>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+          <p className="text-muted-foreground text-sm">{format(now, 'MMMM yyyy')} overview</p>
         </div>
+        <Link to="/transactions">
+          <Button className="gap-2"><Plus className="h-4 w-4" /> Add Transaction</Button>
+        </Link>
+      </div>
 
-        {/* Balance Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <div className="animate-slide-up" style={{ animationDelay: '0.1s' }}>
-            <BalanceCard type="owed" amount={totalOwed} label="You are owed" />
-          </div>
-          <div className="animate-slide-up" style={{ animationDelay: '0.2s' }}>
-            <BalanceCard type="owe" amount={totalOwe} label="You owe" />
-          </div>
-          <div className="animate-slide-up" style={{ animationDelay: '0.3s' }}>
-            <BalanceCard
-              type="total"
-              amount={totalOwed - totalOwe}
-              label="Net balance"
-            />
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="flex gap-3 mb-8 overflow-x-auto pb-2">
-          <Link to="/groups?create=true">
-            <Button variant="hero" className="whitespace-nowrap">
-              <Plus className="h-4 w-4" />
-              New Group
-            </Button>
-          </Link>
-          <Link to="/groups">
-            <Button variant="outline" className="whitespace-nowrap">
-              <Users className="h-4 w-4" />
-              View Groups
-            </Button>
-          </Link>
-          <Link to="/expenses">
-            <Button variant="outline" className="whitespace-nowrap">
-              <Receipt className="h-4 w-4" />
-              All Expenses
-            </Button>
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Groups */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-foreground">Your Groups</h2>
-              <Link to="/groups">
-                <Button variant="ghost" size="sm" className="gap-1">
-                  View all <ArrowRight className="h-4 w-4" />
-                </Button>
-              </Link>
-            </div>
-
-            {groups.length === 0 ? (
-              <div className="text-center py-12 rounded-2xl bg-card shadow-soft">
-                <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="font-medium text-foreground mb-2">No groups yet</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Create a group to start splitting expenses
-                </p>
-                <Link to="/groups?create=true">
-                  <Button variant="hero">
-                    <Plus className="h-4 w-4" />
-                    Create Group
-                  </Button>
-                </Link>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {groups.slice(0, 4).map((group) => {
-                  const groupExpenses = expenses.filter((e) => e.groupId === group.id);
-                  const balances = calculateBalances(groupExpenses, group.members);
-                  const userBalance = balances.find((b) => b.userId === currentUser.id);
-                  return (
-                    <GroupCard
-                      key={group.id}
-                      group={group}
-                      balance={userBalance?.amount}
-                    />
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Recent Activity & Settlements */}
-          <div className="space-y-6">
-            {/* Settlements */}
-            {settlements.length > 0 && (
-              <div className="space-y-3">
-                <h2 className="text-xl font-semibold text-foreground">
-                  Settle Up
-                </h2>
-                <div className="space-y-3">
-                  {settlements.slice(0, 3).map((settlement, idx) => (
-                    <SettlementCard
-                      key={idx}
-                      settlement={settlement}
-                      currentUserId={currentUser.id}
-                    />
-                  ))}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {stats.map((stat, i) => (
+          <motion.div key={stat.label} variants={fadeUp} initial="initial" animate="animate" transition={{ delay: i * 0.1 }}>
+            <Card className="glass">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm text-muted-foreground font-medium">{stat.label}</span>
+                  <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${stat.bgColor}`}>
+                    <stat.icon className={`h-4 w-4 ${stat.color}`} />
+                  </div>
                 </div>
-              </div>
-            )}
+                <p className="text-2xl font-bold text-foreground">
+                  {stat.isStat ? `${stat.value}%` : `₹${stat.value.toLocaleString('en-IN')}`}
+                </p>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </div>
 
-            {/* Recent Expenses */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-foreground">
-                  Recent Activity
-                </h2>
-                <Link to="/expenses">
-                  <Button variant="ghost" size="sm" className="gap-1">
-                    View all <ArrowRight className="h-4 w-4" />
-                  </Button>
-                </Link>
+      <div className="grid gap-6 lg:grid-cols-5">
+        <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.4 }} className="lg:col-span-3">
+          <Card className="glass">
+            <CardHeader><CardTitle className="text-lg">Cash Flow — Last 30 Days</CardTitle></CardHeader>
+            <CardContent>
+              <div className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="incomeGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(142, 71%, 45%)" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="hsl(142, 71%, 45%)" stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="expenseGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="hsl(0, 84%, 60%)" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="hsl(0, 84%, 60%)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis dataKey="date" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }} />
+                    <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }} />
+                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px', color: 'hsl(var(--foreground))' }} />
+                    <Area type="monotone" dataKey="income" stroke="hsl(142, 71%, 45%)" fill="url(#incomeGrad)" strokeWidth={2} />
+                    <Area type="monotone" dataKey="expenses" stroke="hsl(0, 84%, 60%)" fill="url(#expenseGrad)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
+            </CardContent>
+          </Card>
+        </motion.div>
 
-              {recentExpenses.length === 0 ? (
-                <div className="text-center py-8 rounded-xl bg-card">
-                  <Receipt className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                  <p className="text-sm text-muted-foreground">
-                    No expenses yet
-                  </p>
+        <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.5 }} className="lg:col-span-2">
+          <Card className="glass h-full">
+            <CardHeader><CardTitle className="text-lg">Recent Transactions</CardTitle></CardHeader>
+            <CardContent>
+              {recentTransactions.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-muted-foreground text-sm">No transactions yet</p>
+                  <Link to="/transactions">
+                    <Button variant="outline" size="sm" className="mt-3 gap-1"><Plus className="h-3 w-3" /> Add first</Button>
+                  </Link>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {recentExpenses.map((expense) => (
-                    <ExpenseItem
-                      key={expense.id}
-                      expense={expense}
-                      currentUserId={currentUser.id}
-                    />
+                <div className="space-y-3">
+                  {recentTransactions.map((tx) => (
+                    <div key={tx.id} className="flex items-center justify-between py-2">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tx.type === 'income' ? 'bg-success/10' : 'bg-destructive/10'}`}>
+                          {tx.type === 'income' ? <ArrowUpRight className="h-4 w-4 text-success" /> : <ArrowDownRight className="h-4 w-4 text-destructive" />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{tx.description || 'Untitled'}</p>
+                          <p className="text-xs text-muted-foreground">{format(new Date(tx.date), 'MMM dd')}</p>
+                        </div>
+                      </div>
+                      <span className={`text-sm font-semibold font-mono ${tx.type === 'income' ? 'text-success' : 'text-destructive'}`}>
+                        {tx.type === 'income' ? '+' : '-'}₹{Number(tx.amount).toLocaleString('en-IN')}
+                      </span>
+                    </div>
                   ))}
                 </div>
               )}
-            </div>
-          </div>
-        </div>
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
     </div>
   );
