@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,15 +7,14 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-import { TrendingUp, ArrowRight } from 'lucide-react';
+import { MessageCircle, ArrowRight } from 'lucide-react';
 
-export default function Auth() {
-  const { user, loading } = useAuth();
-  const [isSignUp, setIsSignUp] = useState(false);
+export default function Signup() {
+  const { user, loading, signUp } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const { signIn, signUp } = useAuth();
+  const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
 
   if (loading) {
     return (
@@ -25,28 +24,31 @@ export default function Auth() {
     );
   }
 
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to="/chat" replace />;
+
+  const validate = () => {
+    const errs: typeof errors = {};
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = 'Enter a valid email';
+    if (password.length < 6) errs.password = 'Password must be at least 6 characters';
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!validate()) return;
     setSubmitting(true);
-
-    const { error } = isSignUp
-      ? await signUp(email, password)
-      : await signIn(email, password);
-
+    const { error } = await signUp(email, password);
     if (error) {
       toast.error(error.message);
-    } else if (isSignUp) {
+    } else {
       toast.success('Account created! Check your email to confirm.');
     }
-
     setSubmitting(false);
   };
 
   return (
     <div className="flex min-h-screen">
-      {/* Left panel - branding */}
       <div className="hidden lg:flex lg:w-1/2 items-center justify-center bg-primary/5 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-primary/5" />
         <motion.div
@@ -57,20 +59,19 @@ export default function Auth() {
         >
           <div className="flex items-center gap-3 mb-8">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-              <TrendingUp className="h-6 w-6" />
+              <MessageCircle className="h-6 w-6" />
             </div>
-            <span className="text-3xl font-bold text-foreground">finTrack</span>
+            <span className="text-3xl font-bold text-foreground">ChatApp</span>
           </div>
           <h1 className="text-4xl font-bold text-foreground mb-4">
-            Take control of your finances
+            Join the conversation
           </h1>
           <p className="text-lg text-muted-foreground">
-            Track spending, set budgets, and reach your financial goals with intelligent insights.
+            Create an account and start chatting in real-time with others.
           </p>
         </motion.div>
       </div>
 
-      {/* Right panel - form */}
       <div className="flex w-full lg:w-1/2 items-center justify-center p-8">
         <motion.div
           initial={{ opacity: 0, x: 20 }}
@@ -80,21 +81,15 @@ export default function Auth() {
         >
           <div className="flex items-center gap-3 mb-8 lg:hidden">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <TrendingUp className="h-5 w-5" />
+              <MessageCircle className="h-5 w-5" />
             </div>
-            <span className="text-2xl font-bold text-foreground">finTrack</span>
+            <span className="text-2xl font-bold text-foreground">ChatApp</span>
           </div>
 
           <Card className="border-0 shadow-none bg-transparent">
             <CardHeader className="px-0">
-              <CardTitle className="text-2xl">
-                {isSignUp ? 'Create account' : 'Welcome back'}
-              </CardTitle>
-              <CardDescription>
-                {isSignUp
-                  ? 'Start tracking your finances today'
-                  : 'Sign in to your account'}
-              </CardDescription>
+              <CardTitle className="text-2xl">Create account</CardTitle>
+              <CardDescription>Start chatting in seconds</CardDescription>
             </CardHeader>
             <CardContent className="px-0">
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -105,10 +100,11 @@ export default function Auth() {
                     type="email"
                     placeholder="you@example.com"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => { setEmail(e.target.value); setErrors((p) => ({ ...p, email: undefined })); }}
                     required
                     className="h-11"
                   />
+                  {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
@@ -117,37 +113,24 @@ export default function Auth() {
                     type="password"
                     placeholder="••••••••"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => { setPassword(e.target.value); setErrors((p) => ({ ...p, password: undefined })); }}
                     required
                     minLength={6}
                     className="h-11"
                   />
+                  {errors.password && <p className="text-xs text-destructive">{errors.password}</p>}
                 </div>
-                <Button
-                  type="submit"
-                  className="w-full h-11 gap-2"
-                  disabled={submitting}
-                >
+                <Button type="submit" className="w-full h-11 gap-2" disabled={submitting}>
                   {submitting ? (
                     <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
                   ) : (
-                    <>
-                      {isSignUp ? 'Create account' : 'Sign in'}
-                      <ArrowRight className="h-4 w-4" />
-                    </>
+                    <>Create account <ArrowRight className="h-4 w-4" /></>
                   )}
                 </Button>
               </form>
-
               <div className="mt-6 text-center text-sm text-muted-foreground">
-                {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
-                <button
-                  type="button"
-                  onClick={() => setIsSignUp(!isSignUp)}
-                  className="text-primary font-medium hover:underline"
-                >
-                  {isSignUp ? 'Sign in' : 'Sign up'}
-                </button>
+                Already have an account?{' '}
+                <Link to="/login" className="text-primary font-medium hover:underline">Sign in</Link>
               </div>
             </CardContent>
           </Card>
