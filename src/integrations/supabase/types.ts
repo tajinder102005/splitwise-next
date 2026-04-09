@@ -85,6 +85,89 @@ export type Database = {
         }
         Relationships: []
       }
+      connections: {
+        Row: {
+          addressee_id: string
+          created_at: string
+          id: string
+          requester_id: string
+          status: Database["public"]["Enums"]["connection_status"]
+          updated_at: string
+        }
+        Insert: {
+          addressee_id: string
+          created_at?: string
+          id?: string
+          requester_id: string
+          status?: Database["public"]["Enums"]["connection_status"]
+          updated_at?: string
+        }
+        Update: {
+          addressee_id?: string
+          created_at?: string
+          id?: string
+          requester_id?: string
+          status?: Database["public"]["Enums"]["connection_status"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      conversations: {
+        Row: {
+          created_at: string
+          id: string
+          user1_id: string
+          user2_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          user1_id: string
+          user2_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          user1_id?: string
+          user2_id?: string
+        }
+        Relationships: []
+      }
+      direct_messages: {
+        Row: {
+          content: string
+          conversation_id: string
+          created_at: string
+          id: string
+          read_at: string | null
+          sender_id: string
+        }
+        Insert: {
+          content: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          read_at?: string | null
+          sender_id: string
+        }
+        Update: {
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          read_at?: string | null
+          sender_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "direct_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       goals: {
         Row: {
           created_at: string
@@ -118,6 +201,97 @@ export type Database = {
         }
         Relationships: []
       }
+      group_members: {
+        Row: {
+          group_id: string
+          id: string
+          joined_at: string
+          role: Database["public"]["Enums"]["group_role"]
+          user_id: string
+        }
+        Insert: {
+          group_id: string
+          id?: string
+          joined_at?: string
+          role?: Database["public"]["Enums"]["group_role"]
+          user_id: string
+        }
+        Update: {
+          group_id?: string
+          id?: string
+          joined_at?: string
+          role?: Database["public"]["Enums"]["group_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_members_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_messages: {
+        Row: {
+          content: string
+          created_at: string
+          group_id: string
+          id: string
+          sender_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          group_id: string
+          id?: string
+          sender_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          group_id?: string
+          id?: string
+          sender_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_messages_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      groups: {
+        Row: {
+          created_at: string
+          created_by: string
+          icon_url: string | null
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          icon_url?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          icon_url?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           content: string
@@ -138,6 +312,48 @@ export type Database = {
           created_at?: string
           email?: string
           id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          bio: string | null
+          created_at: string
+          display_name: string | null
+          email: string | null
+          id: string
+          last_seen: string | null
+          phone: string | null
+          status: Database["public"]["Enums"]["user_status"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          display_name?: string | null
+          email?: string | null
+          id?: string
+          last_seen?: string | null
+          phone?: string | null
+          status?: Database["public"]["Enums"]["user_status"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          bio?: string | null
+          created_at?: string
+          display_name?: string | null
+          email?: string | null
+          id?: string
+          last_seen?: string | null
+          phone?: string | null
+          status?: Database["public"]["Enums"]["user_status"]
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -194,7 +410,10 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      connection_status: "pending" | "accepted" | "blocked"
+      group_role: "admin" | "member"
       transaction_type: "income" | "expense"
+      user_status: "online" | "busy" | "offline"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -322,7 +541,10 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      connection_status: ["pending", "accepted", "blocked"],
+      group_role: ["admin", "member"],
       transaction_type: ["income", "expense"],
+      user_status: ["online", "busy", "offline"],
     },
   },
 } as const
