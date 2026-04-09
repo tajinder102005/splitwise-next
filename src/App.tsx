@@ -6,7 +6,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/hooks/useAuth";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
-import Chat from "@/pages/Chat";
+import ChatApp from "@/pages/ChatApp";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -22,7 +22,7 @@ const App = () => (
               <Route path="/" element={<Navigate to="/chat" replace />} />
               <Route path="/login" element={<Login />} />
               <Route path="/signup" element={<Signup />} />
-              <Route path="/chat" element={<Chat />} />
+              <Route path="/chat" element={<ChatApp />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
