@@ -8,11 +8,10 @@ import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import type { ChatView } from '@/pages/ChatApp';
 import CreateGroupDialog from '@/components/chat/CreateGroupDialog';
 import {
-  MessageCircle, Users, Search, UserPlus, Settings, LogOut, Plus, Bell,
+  MessageCircle, Users, Search, UserPlus, Settings, LogOut,
 } from 'lucide-react';
 
 interface ConversationItem {
@@ -23,6 +22,7 @@ interface ConversationItem {
   other_status: string;
   last_message?: string;
   last_message_at?: string;
+  unread_count: number;
 }
 
 interface GroupItem {
@@ -61,15 +61,24 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
         .from('profiles')
         .select('display_name, avatar_url, status')
         .eq('user_id', otherId)
-        .single();
+        .maybeSingle();
 
       const { data: lastMsg } = await supabase
         .from('direct_messages')
         .select('content, created_at')
         .eq('conversation_id', conv.id)
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
+
+      const { count: unread } = await supabase
+        .from('direct_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('conversation_id', conv.id)
+        .neq('sender_id', user.id)
+        .is('read_at', null)
+        .is('deleted_at', null);
 
       items.push({
         conversation_id: conv.id,
@@ -79,6 +88,7 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
         other_status: prof?.status || 'offline',
         last_message: lastMsg?.content,
         last_message_at: lastMsg?.created_at,
+        unread_count: unread || 0,
       });
     }
     items.sort((a, b) => (b.last_message_at || '').localeCompare(a.last_message_at || ''));
@@ -108,6 +118,25 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
     fetchGroups();
   }, [fetchConversations, fetchGroups]);
 
+  // Refresh when a new message arrives
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel('sidebar-refresh')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'direct_messages' }, () => {
+        fetchConversations();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, fetchConversations]);
+
+  // When navigating to a conversation, refresh to clear badge
+  useEffect(() => {
+    if (currentView.type === 'dm') {
+      setTimeout(fetchConversations, 1000);
+    }
+  }, [currentView]);
+
   const initials = (name: string | null) => {
     if (!name) return '?';
     return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
@@ -118,6 +147,8 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
     if (s === 'busy') return 'bg-yellow-500';
     return 'bg-muted-foreground/40';
   };
+
+  const totalUnread = conversations.reduce((sum, c) => sum + c.unread_count, 0);
 
   const filtered = conversations.filter(c =>
     c.other_display_name.toLowerCase().includes(search.toLowerCase())
@@ -137,6 +168,11 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
               <MessageCircle className="h-4 w-4" />
             </div>
             <span className="text-lg font-bold text-foreground">ChatApp</span>
+            {totalUnread > 0 && (
+              <Badge variant="destructive" className="h-5 min-w-5 text-[10px] px-1.5">
+                {totalUnread > 99 ? '99+' : totalUnread}
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -192,9 +228,14 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
       <div className="flex border-b border-border">
         <button
           onClick={() => setTab('chats')}
-          className={`flex-1 py-2.5 text-sm font-medium transition-colors ${tab === 'chats' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}
+          className={`flex-1 py-2.5 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${tab === 'chats' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground hover:text-foreground'}`}
         >
           Chats
+          {totalUnread > 0 && tab !== 'chats' && (
+            <Badge variant="destructive" className="h-4 min-w-4 text-[9px] px-1">
+              {totalUnread}
+            </Badge>
+          )}
         </button>
         <button
           onClick={() => setTab('groups')}
@@ -217,33 +258,45 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
                 </Button>
               </div>
             ) : (
-              filtered.map((conv) => (
-                <button
-                  key={conv.conversation_id}
-                  onClick={() => onNavigate({ type: 'dm', conversationId: conv.conversation_id, otherUserId: conv.other_user_id })}
-                  className={`flex items-center gap-3 w-full p-2.5 rounded-lg transition-colors ${
-                    currentView.type === 'dm' && currentView.conversationId === conv.conversation_id
-                      ? 'bg-primary/10 text-primary'
-                      : 'hover:bg-accent/50'
-                  }`}
-                >
-                  <div className="relative flex-shrink-0">
-                    <Avatar className="h-10 w-10">
-                      <AvatarImage src={conv.other_avatar_url || ''} />
-                      <AvatarFallback className="text-xs bg-primary/10 text-primary">
-                        {initials(conv.other_display_name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-card ${statusColor(conv.other_status)}`} />
-                  </div>
-                  <div className="min-w-0 flex-1 text-left">
-                    <p className="text-sm font-medium truncate">{conv.other_display_name}</p>
-                    {conv.last_message && (
-                      <p className="text-xs text-muted-foreground truncate">{conv.last_message}</p>
-                    )}
-                  </div>
-                </button>
-              ))
+              filtered.map((conv) => {
+                const isActive = currentView.type === 'dm' && currentView.conversationId === conv.conversation_id;
+                return (
+                  <button
+                    key={conv.conversation_id}
+                    onClick={() => onNavigate({ type: 'dm', conversationId: conv.conversation_id, otherUserId: conv.other_user_id })}
+                    className={`flex items-center gap-3 w-full p-2.5 rounded-lg transition-colors ${
+                      isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/50'
+                    }`}
+                  >
+                    <div className="relative flex-shrink-0">
+                      <Avatar className="h-10 w-10">
+                        <AvatarImage src={conv.other_avatar_url || ''} />
+                        <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                          {initials(conv.other_display_name)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className={`absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-card ${statusColor(conv.other_status)}`} />
+                    </div>
+                    <div className="min-w-0 flex-1 text-left">
+                      <div className="flex items-center justify-between">
+                        <p className={`text-sm truncate ${conv.unread_count > 0 && !isActive ? 'font-semibold text-foreground' : 'font-medium'}`}>
+                          {conv.other_display_name}
+                        </p>
+                        {conv.unread_count > 0 && !isActive && (
+                          <Badge variant="destructive" className="h-5 min-w-5 text-[10px] px-1.5 ml-1 shrink-0">
+                            {conv.unread_count}
+                          </Badge>
+                        )}
+                      </div>
+                      {conv.last_message && (
+                        <p className={`text-xs truncate ${conv.unread_count > 0 && !isActive ? 'text-foreground/70 font-medium' : 'text-muted-foreground'}`}>
+                          {conv.last_message}
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                );
+              })
             )}
           </div>
         )}

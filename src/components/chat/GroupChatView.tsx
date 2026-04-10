@@ -7,10 +7,21 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, ArrowLeft, Users, UserPlus, Shield, UserMinus } from 'lucide-react';
+import { ArrowLeft, Users, UserPlus, Shield, UserMinus, Pencil, Trash2, X, Check, LogOut } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import MessageInput from '@/components/chat/MessageInput';
+import AttachmentPreview from '@/components/chat/AttachmentPreview';
+import type { UploadedFile } from '@/hooks/useFileUpload';
+
+interface Attachment {
+  id: string;
+  file_url: string;
+  file_name: string;
+  file_type: string;
+  file_size: number;
+}
 
 interface GroupMessage {
   id: string;
@@ -18,6 +29,9 @@ interface GroupMessage {
   sender_id: string;
   content: string;
   created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+  attachments?: Attachment[];
 }
 
 interface Member {
@@ -43,10 +57,10 @@ export default function GroupChatView({ groupId, onBack }: Props) {
   const [group, setGroup] = useState<GroupInfo | null>(null);
   const [messages, setMessages] = useState<GroupMessage[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [sending, setSending] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [addEmail, setAddEmail] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
 
   const myRole = members.find(m => m.user_id === user?.id)?.role;
@@ -75,7 +89,19 @@ export default function GroupChatView({ groupId, onBack }: Props) {
       .eq('group_id', groupId)
       .order('created_at', { ascending: true })
       .limit(100);
-    setMessages((data || []) as GroupMessage[]);
+
+    if (!data) return;
+
+    const withAttachments = await Promise.all(
+      (data as GroupMessage[]).map(async (msg) => {
+        const { data: atts } = await supabase
+          .from('group_message_attachments')
+          .select('*')
+          .eq('message_id', msg.id);
+        return { ...msg, attachments: atts || [] };
+      })
+    );
+    setMessages(withAttachments);
   }, [groupId]);
 
   useEffect(() => { fetchGroup(); fetchMembers(); fetchMessages(); }, [fetchGroup, fetchMembers, fetchMessages]);
@@ -84,25 +110,52 @@ export default function GroupChatView({ groupId, onBack }: Props) {
     const channel = supabase
       .channel(`group-${groupId}`)
       .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'group_messages',
+        event: '*', schema: 'public', table: 'group_messages',
         filter: `group_id=eq.${groupId}`,
-      }, (payload) => {
-        const msg = payload.new as GroupMessage;
-        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
-      })
+      }, () => { fetchMessages(); })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [groupId]);
+  }, [groupId, fetchMessages]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !user) return;
-    setSending(true);
-    await supabase.from('group_messages').insert({ group_id: groupId, sender_id: user.id, content: newMessage.trim() });
-    setNewMessage('');
-    setSending(false);
+  const handleSend = async (content: string, attachment?: UploadedFile) => {
+    if (!user) return;
+    const { data: msg, error } = await supabase.from('group_messages').insert({
+      group_id: groupId,
+      sender_id: user.id,
+      content: content || '',
+    }).select().single();
+
+    if (error || !msg) { toast.error('Failed to send'); return; }
+
+    if (attachment) {
+      await supabase.from('group_message_attachments').insert({
+        message_id: msg.id,
+        file_url: attachment.url,
+        file_name: attachment.name,
+        file_type: attachment.type,
+        file_size: attachment.size,
+      });
+    }
+    fetchMessages();
+  };
+
+  const handleEdit = async (msgId: string) => {
+    if (!editText.trim()) return;
+    await supabase.from('group_messages')
+      .update({ content: editText.trim(), edited_at: new Date().toISOString() })
+      .eq('id', msgId);
+    setEditingId(null);
+    setEditText('');
+    fetchMessages();
+  };
+
+  const handleDelete = async (msgId: string) => {
+    await supabase.from('group_messages')
+      .update({ deleted_at: new Date().toISOString(), content: '' })
+      .eq('id', msgId);
+    fetchMessages();
   };
 
   const addMember = async () => {
@@ -124,6 +177,13 @@ export default function GroupChatView({ groupId, onBack }: Props) {
     await supabase.from('group_members').delete().eq('group_id', groupId).eq('user_id', userId);
     toast.success('Member removed');
     fetchMembers();
+  };
+
+  const leaveGroup = async () => {
+    if (!user) return;
+    await supabase.from('group_members').delete().eq('group_id', groupId).eq('user_id', user.id);
+    toast.success('Left the group');
+    onBack();
   };
 
   const getSenderName = (senderId: string) => {
@@ -178,6 +238,11 @@ export default function GroupChatView({ groupId, onBack }: Props) {
                 </div>
               ))}
             </ScrollArea>
+            <div className="pt-2 border-t border-border">
+              <Button variant="ghost" size="sm" className="w-full text-destructive hover:text-destructive gap-2" onClick={leaveGroup}>
+                <LogOut className="h-4 w-4" /> Leave Group
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
       </header>
@@ -187,17 +252,72 @@ export default function GroupChatView({ groupId, onBack }: Props) {
           <AnimatePresence initial={false}>
             {messages.map((msg) => {
               const isOwn = msg.sender_id === user?.id;
+              const isDeleted = !!msg.deleted_at;
               return (
-                <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15 }}
-                  className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
+                <motion.div
+                  key={msg.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className={`flex group ${isOwn ? 'justify-end' : 'justify-start'}`}
                 >
-                  <Card className={`max-w-[75%] border-0 px-3.5 py-2 shadow-sm ${isOwn ? 'bg-primary text-primary-foreground' : 'bg-card text-card-foreground'}`}>
-                    {!isOwn && <p className="text-xs font-semibold text-primary mb-0.5">{getSenderName(msg.sender_id)}</p>}
-                    <p className="text-sm leading-relaxed">{msg.content}</p>
-                    <p className={`mt-0.5 text-[10px] ${isOwn ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
-                      {format(new Date(msg.created_at), 'h:mm a')}
-                    </p>
-                  </Card>
+                  <div className={`flex items-end gap-1 max-w-[80%] ${isOwn ? 'flex-row-reverse' : ''}`}>
+                    {isOwn && !isDeleted && editingId !== msg.id && (
+                      <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                          onClick={() => { setEditingId(msg.id); setEditText(msg.content); }}>
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDelete(msg.id)}>
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    )}
+                    <Card className={`border-0 px-3.5 py-2 shadow-sm ${isOwn ? 'bg-primary text-primary-foreground' : 'bg-card text-card-foreground'} ${isDeleted ? 'opacity-50' : ''}`}>
+                      {isDeleted ? (
+                        <p className={`text-sm italic ${isOwn ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
+                          This message was deleted
+                        </p>
+                      ) : editingId === msg.id ? (
+                        <div className="flex items-center gap-2 min-w-[200px]">
+                          <Input
+                            value={editText}
+                            onChange={e => setEditText(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleEdit(msg.id); if (e.key === 'Escape') { setEditingId(null); setEditText(''); } }}
+                            className="h-7 text-sm bg-transparent border-primary-foreground/30 text-primary-foreground"
+                            autoFocus
+                          />
+                          <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => handleEdit(msg.id)}>
+                            <Check className="h-3.5 w-3.5 text-primary-foreground" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => { setEditingId(null); setEditText(''); }}>
+                            <X className="h-3.5 w-3.5 text-primary-foreground" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          {!isOwn && <p className="text-xs font-semibold text-primary mb-0.5">{getSenderName(msg.sender_id)}</p>}
+                          {msg.attachments && msg.attachments.length > 0 && (
+                            <div className="space-y-1">
+                              {msg.attachments.map(att => (
+                                <AttachmentPreview key={att.id} attachment={att} isOwn={isOwn} />
+                              ))}
+                            </div>
+                          )}
+                          {msg.content && (
+                            <p className="text-sm leading-relaxed">{msg.content}</p>
+                          )}
+                        </>
+                      )}
+                      {!isDeleted && editingId !== msg.id && (
+                        <p className={`mt-0.5 text-[10px] ${isOwn ? 'text-primary-foreground/60 text-right' : 'text-muted-foreground'}`}>
+                          {format(new Date(msg.created_at), 'h:mm a')}
+                          {msg.edited_at && ' (edited)'}
+                        </p>
+                      )}
+                    </Card>
+                  </div>
                 </motion.div>
               );
             })}
@@ -206,14 +326,7 @@ export default function GroupChatView({ groupId, onBack }: Props) {
         </div>
       </div>
 
-      <div className="border-t border-border bg-card px-4 py-3">
-        <form onSubmit={handleSend} className="mx-auto flex max-w-3xl items-center gap-2">
-          <Input value={newMessage} onChange={e => setNewMessage(e.target.value)} placeholder="Type a message..." className="h-11 flex-1" disabled={sending} />
-          <Button type="submit" size="icon" className="h-11 w-11 shrink-0" disabled={sending || !newMessage.trim()}>
-            <Send className="h-4 w-4" />
-          </Button>
-        </form>
-      </div>
+      <MessageInput onSend={handleSend} />
     </div>
   );
 }
