@@ -30,15 +30,16 @@ export function useConnections() {
     fetchConnections();
 
     if (!user) return;
+    const channelName = `connections-rt-${user.id}`;
     const channel = supabase
-      .channel('connections-realtime')
+      .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'connections' }, () => {
         fetchConnections();
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [user, fetchConnections]);
+  }, [user?.id]);
 
   const sendRequest = async (addresseeId: string) => {
     if (!user) return;
