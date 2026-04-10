@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useConnections } from '@/hooks/useConnections';
 import { supabase } from '@/integrations/supabase/client';
@@ -20,7 +20,7 @@ interface Props {
 
 export default function ContactDiscovery({ onBack, onStartChat }: Props) {
   const { user } = useAuth();
-  const { acceptedContacts, pendingIncoming, pendingOutgoing, sendRequest, acceptRequest, blockConnection, removeConnection } = useConnections();
+  const { connections, acceptedContacts, pendingIncoming, pendingOutgoing, sendRequest, acceptRequest, blockConnection, removeConnection } = useConnections();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Profile[]>([]);
   const [searching, setSearching] = useState(false);
@@ -38,11 +38,17 @@ export default function ContactDiscovery({ onBack, onStartChat }: Props) {
     setSearching(false);
   };
 
+  const getConnectionStatus = (otherUserId: string) => {
+    const conn = connections.find(
+      c => (c.requester_id === otherUserId || c.addressee_id === otherUserId)
+    );
+    return conn ? conn.status : null;
+  };
+
   const startConversation = async (otherUserId: string) => {
     if (!user) return;
     const [u1, u2] = [user.id, otherUserId].sort();
 
-    // Check existing conversation
     const { data: existing } = await supabase
       .from('conversations')
       .select('id')
@@ -66,23 +72,6 @@ export default function ContactDiscovery({ onBack, onStartChat }: Props) {
   };
 
   const getOtherUserId = (conn: any) => conn.requester_id === user?.id ? conn.addressee_id : conn.requester_id;
-
-  const initials = (name: string | null) => name ? name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) : '?';
-
-  const ContactCard = ({ userId, name, avatarUrl, actions }: { userId: string; name: string; avatarUrl?: string | null; actions: React.ReactNode }) => (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-      <Card className="flex items-center gap-3 p-3 border-0 bg-accent/30">
-        <Avatar className="h-10 w-10">
-          <AvatarImage src={avatarUrl || ''} />
-          <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials(name)}</AvatarFallback>
-        </Avatar>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{name}</p>
-        </div>
-        <div className="flex items-center gap-1">{actions}</div>
-      </Card>
-    </motion.div>
-  );
 
   return (
     <div className="flex flex-col h-full">
@@ -116,19 +105,29 @@ export default function ContactDiscovery({ onBack, onStartChat }: Props) {
           {searchResults.length > 0 && (
             <div className="space-y-2">
               <h3 className="text-sm font-semibold text-muted-foreground">Search Results</h3>
-              {searchResults.map(p => (
-                <ContactCard
-                  key={p.user_id}
-                  userId={p.user_id}
-                  name={p.display_name || p.email}
-                  avatarUrl={p.avatar_url}
-                  actions={
-                    <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => sendRequest(p.user_id)}>
-                      <UserPlus className="h-3.5 w-3.5" /> Connect
-                    </Button>
-                  }
-                />
-              ))}
+              {searchResults.map(p => {
+                const status = getConnectionStatus(p.user_id);
+                return (
+                  <ContactCard
+                    key={p.user_id}
+                    name={p.display_name || p.email}
+                    avatarUrl={p.avatar_url}
+                    actions={
+                      status === 'accepted' ? (
+                        <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => startConversation(p.user_id)}>
+                          <MessageCircle className="h-3.5 w-3.5" /> Message
+                        </Button>
+                      ) : status === 'pending' ? (
+                        <Badge variant="secondary">Pending</Badge>
+                      ) : (
+                        <Button size="sm" variant="outline" className="h-8 gap-1" onClick={() => sendRequest(p.user_id)}>
+                          <UserPlus className="h-3.5 w-3.5" /> Connect
+                        </Button>
+                      )
+                    }
+                  />
+                );
+              })}
             </div>
           )}
 
@@ -192,11 +191,34 @@ export default function ContactDiscovery({ onBack, onStartChat }: Props) {
   );
 }
 
-function ConnectedContact({ connectionId, otherUserId, onMessage, onRemove }: { connectionId: string; otherUserId: string; onMessage: (id: string) => void; onRemove: (id: string) => void }) {
+function ContactCard({ name, avatarUrl, actions }: { name: string; avatarUrl?: string | null; actions: React.ReactNode }) {
+  const initials = (n: string | null) => n ? n.split(' ').map((s: string) => s[0]).join('').toUpperCase().slice(0, 2) : '?';
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <Card className="flex items-center gap-3 p-3 border-0 bg-accent/30">
+        <Avatar className="h-10 w-10">
+          <AvatarImage src={avatarUrl || ''} />
+          <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials(name)}</AvatarFallback>
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium truncate">{name}</p>
+        </div>
+        <div className="flex items-center gap-1">{actions}</div>
+      </Card>
+    </motion.div>
+  );
+}
+
+function useProfileLoader(userId: string) {
   const [profile, setProfile] = useState<any>(null);
-  useState(() => {
-    supabase.from('profiles').select('*').eq('user_id', otherUserId).single().then(({ data }) => setProfile(data));
-  });
+  useEffect(() => {
+    supabase.from('profiles').select('*').eq('user_id', userId).single().then(({ data }) => setProfile(data));
+  }, [userId]);
+  return profile;
+}
+
+function ConnectedContact({ connectionId, otherUserId, onMessage, onRemove }: { connectionId: string; otherUserId: string; onMessage: (id: string) => void; onRemove: (id: string) => void }) {
+  const profile = useProfileLoader(otherUserId);
   if (!profile) return null;
   return (
     <Card className="flex items-center gap-3 p-3 border-0 bg-accent/30">
@@ -222,10 +244,7 @@ function ConnectedContact({ connectionId, otherUserId, onMessage, onRemove }: { 
 }
 
 function PendingContact({ connectionId, otherUserId, onAccept, onBlock }: { connectionId: string; otherUserId: string; onAccept: (id: string) => void; onBlock: (id: string) => void }) {
-  const [profile, setProfile] = useState<any>(null);
-  useState(() => {
-    supabase.from('profiles').select('*').eq('user_id', otherUserId).single().then(({ data }) => setProfile(data));
-  });
+  const profile = useProfileLoader(otherUserId);
   if (!profile) return null;
   return (
     <Card className="flex items-center gap-3 p-3 border-0 bg-accent/30">
@@ -249,10 +268,7 @@ function PendingContact({ connectionId, otherUserId, onAccept, onBlock }: { conn
 }
 
 function SentRequest({ connectionId, otherUserId, onCancel }: { connectionId: string; otherUserId: string; onCancel: (id: string) => void }) {
-  const [profile, setProfile] = useState<any>(null);
-  useState(() => {
-    supabase.from('profiles').select('*').eq('user_id', otherUserId).single().then(({ data }) => setProfile(data));
-  });
+  const profile = useProfileLoader(otherUserId);
   if (!profile) return null;
   return (
     <Card className="flex items-center gap-3 p-3 border-0 bg-accent/30">
