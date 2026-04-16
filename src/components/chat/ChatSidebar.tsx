@@ -67,7 +67,6 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
         .from('direct_messages')
         .select('content, created_at')
         .eq('conversation_id', conv.id)
-        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -77,8 +76,7 @@ export default function ChatSidebar({ currentView, onNavigate }: Props) {
         .select('*', { count: 'exact', head: true })
         .eq('conversation_id', conv.id)
         .neq('sender_id', user.id)
-        .is('read_at', null)
-        .is('deleted_at', null);
+        .is('read_at', null);
 
       items.push({
         conversation_id: conv.id,
