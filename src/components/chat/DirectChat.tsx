@@ -6,21 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
-import { ArrowLeft, Check, CheckCheck, Pencil, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, CheckCheck } from 'lucide-react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import MessageInput from '@/components/chat/MessageInput';
-import AttachmentPreview from '@/components/chat/AttachmentPreview';
-import type { UploadedFile } from '@/hooks/useFileUpload';
-
-interface Attachment {
-  id: string;
-  file_url: string;
-  file_name: string;
-  file_type: string;
-  file_size: number;
-}
 
 interface DirectMessage {
   id: string;
@@ -29,9 +19,6 @@ interface DirectMessage {
   content: string;
   read_at: string | null;
   created_at: string;
-  edited_at: string | null;
-  deleted_at: string | null;
-  attachments?: Attachment[];
 }
 
 interface Props {
@@ -45,8 +32,6 @@ export default function DirectChat({ conversationId, otherUserId, onBack }: Prop
   const otherProfile = useProfileById(otherUserId);
   const [messages, setMessages] = useState<DirectMessage[]>([]);
   const [typing, setTyping] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editText, setEditText] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const typingChannel = useRef<any>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout>>();
@@ -59,18 +44,7 @@ export default function DirectChat({ conversationId, otherUserId, onBack }: Prop
       .order('created_at', { ascending: true })
       .limit(100);
 
-    if (!data) return;
-
-    const withAttachments = await Promise.all(
-      (data as DirectMessage[]).map(async (msg) => {
-        const { data: atts } = await supabase
-          .from('message_attachments')
-          .select('*')
-          .eq('message_id', msg.id);
-        return { ...msg, attachments: atts || [] };
-      })
-    );
-    setMessages(withAttachments);
+    if (data) setMessages(data as DirectMessage[]);
   }, [conversationId]);
 
   useEffect(() => { fetchMessages(); }, [fetchMessages]);
@@ -103,7 +77,7 @@ export default function DirectChat({ conversationId, otherUserId, onBack }: Prop
 
   useEffect(() => {
     if (!user) return;
-    const unread = messages.filter(m => m.sender_id !== user.id && !m.read_at && !m.deleted_at);
+    const unread = messages.filter(m => m.sender_id !== user.id && !m.read_at);
     if (unread.length > 0) {
       supabase.from('direct_messages')
         .update({ read_at: new Date().toISOString() })
@@ -123,43 +97,15 @@ export default function DirectChat({ conversationId, otherUserId, onBack }: Prop
     }, 2000);
   };
 
-  const handleSend = async (content: string, attachment?: UploadedFile) => {
-    if (!user) return;
-    const { data: msg, error } = await supabase.from('direct_messages').insert({
+  const handleSend = async (content: string) => {
+    if (!user || !content.trim()) return;
+    const { error } = await supabase.from('direct_messages').insert({
       conversation_id: conversationId,
       sender_id: user.id,
-      content: content || '',
-    }).select().single();
-
-    if (error || !msg) { toast.error('Failed to send'); return; }
-
-    if (attachment) {
-      await supabase.from('message_attachments').insert({
-        message_id: msg.id,
-        file_url: attachment.url,
-        file_name: attachment.name,
-        file_type: attachment.type,
-        file_size: attachment.size,
-      });
-    }
-    fetchMessages();
-  };
-
-  const handleEdit = async (msgId: string) => {
-    if (!editText.trim()) return;
-    await supabase.from('direct_messages')
-      .update({ content: editText.trim(), edited_at: new Date().toISOString() })
-      .eq('id', msgId);
-    setEditingId(null);
-    setEditText('');
-    fetchMessages();
-  };
-
-  const handleDelete = async (msgId: string) => {
-    await supabase.from('direct_messages')
-      .update({ deleted_at: new Date().toISOString(), content: '' })
-      .eq('id', msgId);
-    fetchMessages();
+      content: content.trim(),
+    });
+    if (error) toast.error('Failed to send');
+    else fetchMessages();
   };
 
   const initials = (name: string | null) => name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '?';
@@ -198,84 +144,27 @@ export default function DirectChat({ conversationId, otherUserId, onBack }: Prop
           <AnimatePresence initial={false}>
             {messages.map((msg) => {
               const isOwn = msg.sender_id === user?.id;
-              const isDeleted = !!msg.deleted_at;
               return (
                 <motion.div
                   key={msg.id}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.15 }}
-                  className={`flex group ${isOwn ? 'justify-end' : 'justify-start'}`}
+                  className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div className={`flex items-end gap-1 max-w-[80%] ${isOwn ? 'flex-row-reverse' : ''}`}>
-                    {isOwn && !isDeleted && editingId !== msg.id && (
-                      <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          variant="ghost" size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                          onClick={() => { setEditingId(msg.id); setEditText(msg.content); }}
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          variant="ghost" size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDelete(msg.id)}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )}
-                    <Card className={`border-0 px-3.5 py-2 shadow-sm ${isOwn ? 'bg-primary text-primary-foreground' : 'bg-card text-card-foreground'} ${isDeleted ? 'opacity-50' : ''}`}>
-                      {isDeleted ? (
-                        <p className={`text-sm italic ${isOwn ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
-                          This message was deleted
-                        </p>
-                      ) : editingId === msg.id ? (
-                        <div className="flex items-center gap-2 min-w-[200px]">
-                          <Input
-                            value={editText}
-                            onChange={e => setEditText(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') handleEdit(msg.id); if (e.key === 'Escape') { setEditingId(null); setEditText(''); } }}
-                            className="h-7 text-sm bg-transparent border-primary-foreground/30 text-primary-foreground placeholder:text-primary-foreground/40"
-                            autoFocus
-                          />
-                          <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => handleEdit(msg.id)}>
-                            <Check className="h-3.5 w-3.5 text-primary-foreground" />
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => { setEditingId(null); setEditText(''); }}>
-                            <X className="h-3.5 w-3.5 text-primary-foreground" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <>
-                          {msg.attachments && msg.attachments.length > 0 && (
-                            <div className="space-y-1">
-                              {msg.attachments.map(att => (
-                                <AttachmentPreview key={att.id} attachment={att} isOwn={isOwn} />
-                              ))}
-                            </div>
-                          )}
-                          {msg.content && (
-                            <p className="text-sm leading-relaxed">{msg.content}</p>
-                          )}
-                        </>
+                  <Card className={`border-0 px-3.5 py-2 shadow-sm max-w-[80%] ${isOwn ? 'bg-primary text-primary-foreground' : 'bg-card text-card-foreground'}`}>
+                    <p className="text-sm leading-relaxed">{msg.content}</p>
+                    <div className={`flex items-center gap-1 mt-0.5 ${isOwn ? 'justify-end' : ''}`}>
+                      <span className={`text-[10px] ${isOwn ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
+                        {format(new Date(msg.created_at), 'h:mm a')}
+                      </span>
+                      {isOwn && (
+                        msg.read_at
+                          ? <CheckCheck className="h-3 w-3 text-primary-foreground/60" />
+                          : <Check className="h-3 w-3 text-primary-foreground/40" />
                       )}
-                      {!isDeleted && editingId !== msg.id && (
-                        <div className={`flex items-center gap-1 mt-0.5 ${isOwn ? 'justify-end' : ''}`}>
-                          <span className={`text-[10px] ${isOwn ? 'text-primary-foreground/60' : 'text-muted-foreground'}`}>
-                            {format(new Date(msg.created_at), 'h:mm a')}
-                            {msg.edited_at && ' (edited)'}
-                          </span>
-                          {isOwn && (
-                            msg.read_at
-                              ? <CheckCheck className="h-3 w-3 text-primary-foreground/60" />
-                              : <Check className="h-3 w-3 text-primary-foreground/40" />
-                          )}
-                        </div>
-                      )}
-                    </Card>
-                  </div>
+                    </div>
+                  </Card>
                 </motion.div>
               );
             })}
