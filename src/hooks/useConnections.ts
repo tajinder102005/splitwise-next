@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
@@ -15,6 +15,7 @@ export function useConnections() {
   const { user } = useAuth();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
+  const channelRef = useRef<string>(`connections-rt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   const fetchConnections = useCallback(async () => {
     if (!user) return;
@@ -30,7 +31,7 @@ export function useConnections() {
     fetchConnections();
 
     if (!user) return;
-    const channelName = `connections-rt-${user.id}`;
+    const channelName = channelRef.current;
     const channel = supabase
       .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'connections' }, () => {
